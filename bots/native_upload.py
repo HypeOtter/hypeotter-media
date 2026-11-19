@@ -191,8 +191,10 @@ def buffer_video(p, chan, text, url, link, secs):
     asset = '[{ video: { url: %s } }]' % json.dumps(url)
     meta = ""
     if p == "facebook":
-        meta = 'metadata: { facebook: { type: %s%s } },' % ("reel" if secs <= CFG["max_seconds"]["facebook"] else "post",
-                                                          (", firstComment: %s" % json.dumps(link)) if link else "")
+        # firstComment needs a paid Buffer plan, so the link rides in the caption instead
+        meta = 'metadata: { facebook: { type: %s } },' % ("reel" if secs <= CFG["max_seconds"]["facebook"] else "post")
+        if link and link not in text:
+            text = text + "\n\n" + link
     elif link and p in ("twitter", "threads"):
         thread = '[{ text: %s, assets: %s }, { text: %s }]' % (json.dumps(text), asset, json.dumps(link))
         meta = 'metadata: { %s: { thread: %s } },' % (p, thread)

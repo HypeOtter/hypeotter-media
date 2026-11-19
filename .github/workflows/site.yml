@@ -21,8 +21,13 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
           sparse-checkout: pages
-      - run: |
+      - env:
+          KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+        run: |
           mkdir site; cp pages/* site/; touch site/.nojekyll
+          # client_key is public by design (it appears in every TikTok sign-in link)
+          U="https://www.tiktok.com/v2/auth/authorize/?client_key=$KEY&scope=user.info.basic,video.upload&response_type=code&redirect_uri=https%3A%2F%2Fhypeotter.github.io%2Fhypeotter-media%2F&state=hypeotter"
+          echo "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Connect TikTok</title><p style='font:20px system-ui;margin:2rem'><a href='$U'>Connect @hypeotter to HypeOtter Uploader</a></p>" > site/tiktok.html
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
         with:
           path: site

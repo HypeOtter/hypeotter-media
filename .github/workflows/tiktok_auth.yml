@@ -1,0 +1,57 @@
+name: TikTok sign-in (one time)
+# Trades a one-time TikTok authorization code for a refresh token and saves it in the
+# private repo (social/tiktok_auth.json). Nothing secret is printed.
+on:
+  workflow_dispatch:
+    inputs:
+      code:
+        description: "code= value from the TikTok redirect"
+        required: true
+permissions:
+  contents: read
+concurrency: native-upload
+jobs:
+  token:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          repository: HypeOtter/HypeOtter
+          token: ${{ secrets.PRIVATE_DATA_TOKEN }}
+          path: data
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /social/
+      - name: Exchange code
+        env:
+          CODE: ${{ inputs.code }}
+          KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          REDIRECT: https://hypeotter.github.io/hypeotter-media/
+        run: |
+          python3 - <<'PY'
+          import json, os, time, urllib.parse, urllib.request
+          code = urllib.parse.unquote(os.environ["CODE"].strip())
+          body = urllib.parse.urlencode({"client_key": os.environ["KEY"], "client_secret": os.environ["SECRET"],
+              "code": code, "grant_type": "authorization_code", "redirect_uri": os.environ["REDIRECT"]}).encode()
+          req = urllib.request.Request("https://open.tiktokapis.com/v2/oauth/token/", body,
+              {"Content-Type": "application/x-www-form-urlencoded"})
+          try:
+              d = json.load(urllib.request.urlopen(req, timeout=30))
+          except urllib.error.HTTPError as e:
+              d = json.loads(e.read() or b"{}")
+          if not d.get("refresh_token"):
+              raise SystemExit("exchange failed: " + str(d.get("error", "?")))
+          print("scope:", d.get("scope"))
+          print("refresh token valid for days:", int(d.get("refresh_expires_in", 0)) // 86400)
+          json.dump({"refresh_token": d["refresh_token"], "open_id": d.get("open_id", ""), "scope": d.get("scope", ""),
+                     "updated": time.strftime("%Y-%m-%d")}, open("data/social/tiktok_auth.json", "w"))
+          PY
+      - name: Save to private repo
+        working-directory: data
+        run: |
+          git config user.name "HypeOtter bot"; git config user.email "357183714+HypeOtter@users.noreply.github.com"
+          git add social/tiktok_auth.json && git commit -q -m "[social] tiktok auth"
+          for i in 1 2 3; do git pull -q --rebase && git push -q && exit 0; sleep 10; done; exit 1

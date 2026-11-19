@@ -237,14 +237,26 @@ def instagram(path, text):
     return ("id" in r), r.get("id") or str(r.get("error", r))[:200]
 
 # ---------------- TikTok (inbox draft, file upload) ----------------
+TT_AUTH = os.path.join(ROOT, "social", "tiktok_auth.json")  # private repo only; never printed
+
+def tiktok_ready():
+    return bool(os.environ.get("TIKTOK_CLIENT_SECRET")) and (
+        os.path.exists(TT_AUTH) or bool(os.environ.get("TIKTOK_REFRESH_TOKEN")))
+
 def tiktok(path):
+    auth = jload(TT_AUTH, {})
+    rt = auth.get("refresh_token") or os.environ.get("TIKTOK_REFRESH_TOKEN", "")
     st, b = http("https://open.tiktokapis.com/v2/oauth/token/", urllib.parse.urlencode({
         "client_key": os.environ["TIKTOK_CLIENT_KEY"], "client_secret": os.environ["TIKTOK_CLIENT_SECRET"],
-        "grant_type": "refresh_token", "refresh_token": os.environ["TIKTOK_REFRESH_TOKEN"]}).encode(),
+        "grant_type": "refresh_token", "refresh_token": rt}).encode(),
         {"Content-Type": "application/x-www-form-urlencoded"})
-    tok = json.loads(b).get("access_token")
+    d0 = json.loads(b or "{}")
+    tok = d0.get("access_token")
     if not tok:
         return False, "token refresh failed"
+    if d0.get("refresh_token") and d0["refresh_token"] != rt:
+        jsave(TT_AUTH, {"refresh_token": d0["refresh_token"], "open_id": d0.get("open_id", auth.get("open_id", "")),
+                        "scope": d0.get("scope", auth.get("scope", "")), "updated": time.strftime("%Y-%m-%d")})
     size = os.path.getsize(path)
     chunk = size if size <= 64 * 2**20 else 10 * 2**20
     n = max(1, size // chunk)
@@ -311,7 +323,7 @@ def post():
             elif p == "instagram":
                 res = instagram(path, text) if os.environ.get("META_PAGE_TOKEN") and os.environ.get("IG_USER_ID") else (False, "not set up")
             elif p == "tiktok":
-                res = tiktok(path) if os.environ.get("TIKTOK_REFRESH_TOKEN") else (False, "not set up")
+                res = tiktok(path) if tiktok_ready() else (False, "not set up")
             elif p == "snapchat":
                 res = snapchat(text, slug)
             else:

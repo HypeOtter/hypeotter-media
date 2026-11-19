@@ -87,26 +87,42 @@ def pick():
     up = uploaded()
     by_vid = {v: s for s, v in up.items()}
     skip = CFG_ALL.get("skip_video_ids", {})
+    skip_slugs = set(CFG.get("skip_slugs", []))
+    sent = [x for x in jload(os.path.join(ROOT, "sent.json"), []) if isinstance(x, str)]
     order = [by_vid[v] for v in rss_ids() if v in by_vid] + list(reversed(list(up)))
+    if CFG.get("include_unpublished"):
+        order += [x for x in sent if x not in up]  # delivered to Telegram, never on YouTube
+    later = []
     for slug in dict.fromkeys(order):
         if want and slug != want:
             continue
-        vid = up[slug]
+        vid = up.get(slug)
         man = manifest(slug)
-        if not man or vid in skip:
+        if not man or (vid and vid in skip) or slug in skip_slugs:
             continue
         if not want and man.get("kind", "short") not in CFG["kinds"]:
             continue
-        rec = nat["videos"].get(vid, {})
-        todo = [p for p in targets(vid) if not rec.get(p, {}).get("ok") and rec.get(p, {}).get("tries", 0) < CFG["max_tries"]]
-        if not todo or not is_public(vid):
+        key = vid or "slug:" + slug
+        rec = nat["videos"].get(key, {})
+        todo = [p for p in targets(key) if not rec.get(p, {}).get("ok") and rec.get(p, {}).get("tries", 0) < CFG["max_tries"]]
+        if not todo:
             continue
-        plan = {"slug": slug, "vid": vid, "todo": todo, "token": secrets.token_hex(8)}
-        jsave("plan.json", plan)
-        print("picked 1 video for", ",".join(todo))
-        out("slug", slug); out("token", plan["token"])
-        return
+        public = bool(vid) and is_public(vid)
+        if not public:
+            # unpublished = delivered to Telegram but not public on YouTube; posted after public ones, no YouTube link
+            if (CFG.get("include_unpublished") and (want or slug in sent)) or want:
+                later.append((slug, key, todo))
+            continue
+        return choose(slug, key, todo, True)
+    if later:
+        return choose(*later[0], False)
     print("nothing to post natively"); out("slug", "")
+
+def choose(slug, key, todo, public):
+    plan = {"slug": slug, "vid": key, "todo": todo, "public": public, "token": secrets.token_hex(8)}
+    jsave("plan.json", plan)
+    print("picked 1 video for", ",".join(todo), "(public on YouTube)" if public else "(not on YouTube yet)")
+    out("slug", slug); out("token", plan["token"])
 
 def targets(vid):
     plats = ONLY or CFG["platforms"]
@@ -292,7 +308,8 @@ def post():
     plan = json.load(open("plan.json"))
     slug, vid, todo = plan["slug"], plan["vid"], plan["todo"]
     man = manifest(slug)
-    yt = f"https://youtu.be/{vid}"
+    public = plan.get("public", True)
+    yt = f"https://youtu.be/{vid}" if public else ""
     path, url = os.environ.get("VIDEO_FILE", "video.mp4"), os.environ.get("MEDIA_URL", "")
     secs = mp4_seconds(path)
     now = dt.datetime.now(ET_TZ).isoformat(timespec="minutes")
@@ -306,7 +323,7 @@ def post():
     pending = {}
     for p in todo:
         text = caption(p, man, yt)
-        link = link_line(p, yt) if CFG["link_reply"] else ""
+        link = link_line(p, yt) if CFG["link_reply"] and yt else ""
         limit = CFG["max_seconds"].get(p)
         if limit and secs > limit and p != "facebook":
             res = (False, f"too long for {p} ({secs:.0f}s > {limit}s)"); rec[p] = {"ok": False, "tries": 99, "ref": res[1], "at": now}
@@ -339,7 +356,7 @@ def post():
         except Exception as ex:
             res = (False, str(ex)[:200])
         record(rec, p, res, now)
-        if res[0]:
+        if res[0] and not vid.startswith("slug:"):
             shared["videos"].setdefault(vid, {})[p] = {"ok": True, "ref": "native " + str(res[1])[:200], "at": now}
     if not DRY:
         nat["last_post_at"] = now

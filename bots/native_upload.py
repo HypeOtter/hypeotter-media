@@ -309,7 +309,7 @@ def post():
     slug, vid, todo = plan["slug"], plan["vid"], plan["todo"]
     man = manifest(slug)
     public = plan.get("public", True)
-    yt = f"https://youtu.be/{vid}" if public else ""
+    yt = ((f"https://youtube.com/shorts/{vid}" if (man or {}).get("kind", "short") == "short" else f"https://youtube.com/watch?v={vid}") if public else "")
     path, url = os.environ.get("VIDEO_FILE", "video.mp4"), os.environ.get("MEDIA_URL", "")
     secs = mp4_seconds(path)
     now = dt.datetime.now(ET_TZ).isoformat(timespec="minutes")

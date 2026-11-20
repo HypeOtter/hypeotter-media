@@ -1,0 +1,60 @@
+name: TikTok check (account + upload status)
+# Prints the TikTok account the saved token belongs to and TikTok's status for each upload in social/native.json.
+# Nothing secret is printed. A rotated refresh token is saved back to the private repo.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency: native-upload
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          repository: HypeOtter/HypeOtter
+          token: ${{ secrets.PRIVATE_DATA_TOKEN }}
+          path: data
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /social/
+      - name: Check
+        env:
+          KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+        run: |
+          python3 - <<'PY'
+          import json, time, os, urllib.parse, urllib.request
+          def http(url, data=None, h=None, m=None):
+              r = urllib.request.Request(url, data, h or {}, method=m)
+              try:
+                  with urllib.request.urlopen(r, timeout=30) as x: return json.loads(x.read() or b"{}")
+              except urllib.error.HTTPError as e: return json.loads(e.read() or b"{}")
+          P = "data/social/tiktok_auth.json"; a = json.load(open(P))
+          d = http("https://open.tiktokapis.com/v2/oauth/token/", urllib.parse.urlencode({"client_key": os.environ["KEY"],
+              "client_secret": os.environ["SECRET"], "grant_type": "refresh_token", "refresh_token": a["refresh_token"]}).encode(),
+              {"Content-Type": "application/x-www-form-urlencoded"})
+          tok = d.get("access_token")
+          if not tok: raise SystemExit("refresh failed: " + str(d.get("error")))
+          if d.get("refresh_token") and d["refresh_token"] != a["refresh_token"]:
+              a.update(refresh_token=d["refresh_token"], updated=time.strftime("%Y-%m-%d")); json.dump(a, open(P, "w"))
+          print("scope:", d.get("scope"))
+          H = {"Authorization": "Bearer " + tok, "Content-Type": "application/json; charset=UTF-8"}
+          u = http("https://open.tiktokapis.com/v2/user/info/?fields=display_name,avatar_url,open_id", None, H, "GET")
+          print("ACCOUNT display_name:", u.get("data", {}).get("user", {}).get("display_name"), "| error:", u.get("error", {}).get("code"))
+          nat = json.load(open("data/social/native.json"))
+          for vid, rec in nat["videos"].items():
+              ref = str(rec.get("tiktok", {}).get("ref", "")).split()[0]
+              if not ref.startswith("v_inbox"): continue
+              s = http("https://open.tiktokapis.com/v2/post/publish/status/fetch/", json.dumps({"publish_id": ref}).encode(), H)
+              print("UPLOAD", rec.get("slug"), "->", s.get("data", {}).get("status"), s.get("data", {}).get("fail_reason", ""), "| error:", s.get("error", {}).get("code"), s.get("error", {}).get("message", "")[:120])
+          PY
+      - name: Save rotated token
+        working-directory: data
+        run: |
+          git config user.name "HypeOtter bot"; git config user.email "357183714+HypeOtter@users.noreply.github.com"
+          git add social/tiktok_auth.json; git diff --cached --quiet && exit 0
+          git commit -q -m "[social] tiktok auth refresh"
+          for i in 1 2 3; do git pull -q --rebase && git push -q && exit 0; sleep 10; done; exit 1

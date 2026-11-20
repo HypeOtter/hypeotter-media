@@ -292,7 +292,28 @@ def tiktok(path):
             st, _ = http(d["upload_url"], part, {"Content-Type": "video/mp4", "Content-Range": f"bytes {start}-{end}/{size}"}, "PUT", 600)
             if st not in (200, 201, 206):
                 return False, f"chunk {i} {st}"
-    return True, d.get("publish_id", "draft")
+    pid = d.get("publish_id", "")
+    hdr = {"Authorization": "Bearer " + tok, "Content-Type": "application/json; charset=UTF-8"}
+    who = ""
+    try:
+        st, ub = http("https://open.tiktokapis.com/v2/user/info/?fields=display_name,username", None, hdr, "GET")
+        u = json.loads(ub or "{}").get("data", {}).get("user", {})
+        who = "@" + u["username"] if u.get("username") else u.get("display_name", "")
+        print("tiktok account:", who or ub[:200])
+    except Exception as ex:
+        print("tiktok user info failed", ex)
+    status, why = "", ""
+    for _ in range(12):
+        time.sleep(10)
+        st, sb = http("https://open.tiktokapis.com/v2/post/publish/status/fetch/", json.dumps({"publish_id": pid}).encode(), hdr)
+        sd = json.loads(sb or "{}")
+        status, why = sd.get("data", {}).get("status", ""), sd.get("data", {}).get("fail_reason", "") or sd.get("error", {}).get("code", "")
+        print("tiktok status:", status, why)
+        if status in ("SEND_TO_USER_INBOX", "PUBLISH_COMPLETE", "FAILED"):
+            break
+    if status == "FAILED":
+        return False, f"tiktok failed {why} {who}".strip()
+    return True, f"{pid} {status or 'unknown'} {who}".strip()
 
 # ---------------- Snapchat kit ----------------
 def snapchat(text, slug):

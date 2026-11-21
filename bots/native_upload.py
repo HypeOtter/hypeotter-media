@@ -316,6 +316,11 @@ def tiktok(path):
     return True, f"{pid} {status or 'unknown'} {who}".strip()
 
 # ---------------- Snapchat kit ----------------
+def kit_msg(msg):
+    tok, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID") or CFG.get("telegram_chat_id")
+    if tok and chat:
+        http(f"https://api.telegram.org/bot{tok}/sendMessage", urllib.parse.urlencode({"chat_id": chat, "text": msg}).encode())
+
 def snapchat(text, slug):
     tok, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID") or CFG.get("telegram_chat_id")
     if not tok or not chat:
@@ -330,7 +335,7 @@ def post():
     slug, vid, todo = plan["slug"], plan["vid"], plan["todo"]
     man = manifest(slug)
     public = plan.get("public", True)
-    yt = ((f"https://youtube.com/shorts/{vid}" if (man or {}).get("kind", "short") == "short" else f"https://youtube.com/watch?v={vid}") if public else "")
+    yt = f"https://www.youtube.com/watch?v={vid}" if public else ""  # normal link to this exact video
     path, url = os.environ.get("VIDEO_FILE", "video.mp4"), os.environ.get("MEDIA_URL", "")
     secs = mp4_seconds(path)
     now = dt.datetime.now(ET_TZ).isoformat(timespec="minutes")
@@ -364,6 +369,8 @@ def post():
                 res = instagram(path, text) if os.environ.get("META_PAGE_TOKEN") and os.environ.get("IG_USER_ID") else (False, "not set up")
             elif p == "tiktok":
                 res = tiktok(path) if tiktok_ready() else (False, "not set up")
+                if res[0]:
+                    kit_msg(f"TikTok draft is in your TikTok inbox: {slug}\nPaste this caption, then post:\n{text}")
             elif p == "snapchat":
                 res = snapchat(text, slug)
             else:

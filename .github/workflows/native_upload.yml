@@ -41,6 +41,7 @@ jobs:
           sparse-checkout: |
             /yt_uploaded.json
             /sent.json
+            /review.json
             /social/
             /approved/*/manifest.json
       - id: pick

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Zero-token native video poster for HypeOtter.
-pick : choose the next public YouTube video that has approved/<slug>/final.mp4 in the private data repo,
+pick : choose the next video Otty approved on Telegram (native.on_approval; else the next public YouTube video) that has approved/<slug>/final.mp4 in the private data repo,
        write plan.json (+ GitHub outputs). The workflow then fetches the file and publishes it on GitHub Pages.
 post : post the hosted file natively: X, Facebook (Reel) and Threads via Buffer; Instagram Reel via the
        Graph API (file upload, no public link needed); TikTok inbox draft (file upload); Snapchat kit to Telegram.
@@ -90,7 +90,13 @@ def pick():
     skip_slugs = set(CFG.get("skip_slugs", []))
     sent = [x for x in jload(os.path.join(ROOT, "sent.json"), []) if isinstance(x, str)]
     order = [by_vid[v] for v in rss_ids() if v in by_vid] + list(reversed(list(up)))
-    if CFG.get("include_unpublished"):
+    approved = None
+    if CFG.get("on_approval"):
+        # Otty's rule 2026-11-22: a video goes native right after he taps Approve on Telegram, public on YouTube or not
+        rv = jload(os.path.join(ROOT, "review.json"), {})
+        approved = [s for s, v in rv.get("items", {}).items() if v.get("status") in ("approved", "done")]
+        order = approved
+    if CFG.get("include_unpublished") and approved is None:
         order += [x for x in sent if x not in up]  # delivered to Telegram, never on YouTube
     later = []
     for slug in dict.fromkeys(order):
@@ -103,11 +109,17 @@ def pick():
         if not want and man.get("kind", "short") not in CFG["kinds"]:
             continue
         key = vid or "slug:" + slug
+        if approved is not None and ("slug:" + slug) in nat["videos"]:
+            key = "slug:" + slug  # posted before it went public: keep one record so nothing posts twice
+        elif approved is not None and not (vid and vid in nat["videos"]):
+            key = "slug:" + slug
         rec = nat["videos"].get(key, {})
         todo = [p for p in targets(key) if not rec.get(p, {}).get("ok") and rec.get(p, {}).get("tries", 0) < CFG["max_tries"]]
         if not todo:
             continue
         public = bool(vid) and is_public(vid)
+        if not public and approved is not None:
+            return choose(slug, key, todo, False)  # approved: post now; the YouTube link is added only once public
         if not public:
             # unpublished = delivered to Telegram but not public on YouTube; posted after public ones, no YouTube link
             if (CFG.get("include_unpublished") and (want or slug in sent)) or want:

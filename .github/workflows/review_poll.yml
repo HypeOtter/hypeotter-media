@@ -1,27 +1,19 @@
 name: review poll
 on:
   schedule:
-    - cron: "*/5 13-23,0-3 * * *"   # every 5 min, about 8 am to 11 pm ET (review buttons + DM inbox)
+    - cron: "*/15 13-23,0-3 * * *"   # every 15 min, about 8 am to 11 pm ET
   workflow_dispatch:
-    inputs:
-      dm_test:
-        description: "Send a fake test DM alert to Telegram to try the buttons"
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency: review-poll
 jobs:
   poll:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
-      - name: Read Telegram decisions and DMs
+      - name: Read Telegram decisions
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           PRIVATE_DATA_TOKEN: ${{ secrets.PRIVATE_DATA_TOKEN }}
-          META_PAGE_TOKEN: ${{ secrets.META_PAGE_TOKEN }}
-          IG_USER_ID: ${{ secrets.IG_USER_ID }}
-          DM_TEST: ${{ inputs.dm_test && '1' || '0' }}
         run: pip -q install requests && python3 bots/review_poll.py

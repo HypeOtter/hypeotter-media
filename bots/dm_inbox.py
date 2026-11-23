@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Social DM inbox -> Otty's Telegram chat, with buttons. Zero Hark tokens (runs inside review_poll on GitHub Actions).
+"""Social DM inbox -> Otty's Telegram chat, with buttons. Zero Hark tokens.\n\nPolling (new DMs, hold reminders): hypeotter-media dm_poll.yml every 5 min, 8 am-11 pm ET.\nButton taps and typed replies: the Telegram webhook (Apps Script) -> repository_dispatch tg_update -> private repo dm_hook.yml\n-> `python3 bots/dm_inbox.py hook` (instant).
 
 Every new DM becomes one Telegram alert with four buttons:
   Manage        you handle it yourself; the alert gets an "Open inbox" button and stops nagging
@@ -11,7 +11,7 @@ Replying straight to an alert message with text also sends that text as the repl
 Sources: Facebook Page Messenger + Instagram DMs via Meta Graph API (free; needs secrets META_PAGE_TOKEN with
 pages_messaging + instagram_manage_messages, and IG_USER_ID for Instagram). X, Threads, TikTok, YouTube have no
 free DM API, so they are not polled here. State: private repo social/dm_state.json. Logs never print DM text or names."""
-import datetime as dt, json, os, random, re, time, requests
+import base64, copy, datetime as dt, json, os, random, re, sys, time, requests
 
 GRAPH = "https://graph.facebook.com/v23.0"
 STATE = "social/dm_state.json"
@@ -24,6 +24,34 @@ FLAG = re.compile(r"sponsor|collab|business|promo|paid|pay you|price|rate|\$|mon
 REPLIES = ["Got it, Otty's on it 👀", "Seen it. I'll get back to you soon", "Appreciate you. Reply coming soon",
            "Message received, hang tight", "Otty saw this. Back to you shortly", "Thanks for reaching out, more soon",
            "Noted! I'll circle back soon", "Love this. Give me a bit"]
+
+
+PRIV = "HypeOtter/HypeOtter"
+
+
+def _h():
+    return {"Authorization": f"Bearer {os.environ['PRIVATE_DATA_TOKEN']}", "Accept": "application/vnd.github+json"}
+
+
+def gh_get(path):
+    r = requests.get(f"https://api.github.com/repos/{PRIV}/contents/{path}", headers=_h(), timeout=30)
+    if r.status_code == 404: return None, None
+    r.raise_for_status(); j = r.json()
+    return base64.b64decode(j["content"]).decode(), j["sha"]
+
+
+def gh_put(path, text, sha, msg):
+    body = {"message": msg, "content": base64.b64encode(text.encode()).decode(), "branch": "main",
+            "committer": {"name": "HypeOtter bot", "email": "357183714+HypeOtter@users.noreply.github.com"}}
+    if sha: body["sha"] = sha
+    r = requests.put(f"https://api.github.com/repos/{PRIV}/contents/{path}", headers=_h(), json=body, timeout=30)
+    r.raise_for_status()
+
+
+def tg_api(method, **data):
+    tok = os.environ["TELEGRAM_BOT_TOKEN"].strip().removeprefix("bot").strip()
+    try: return requests.post(f"https://api.telegram.org/bot{tok}/{method}", data=data, timeout=30).json()
+    except Exception: return {}
 
 
 def now():
@@ -46,6 +74,7 @@ class Inbox:
         self.chat = os.environ.get("TELEGRAM_CHAT_ID") or cfg.get("native", {}).get("telegram_chat_id") or dmc.get("telegram_chat_id")
         raw, self.sha = get(STATE)
         self.st = json.loads(raw) if raw else {}
+        self.orig = copy.deepcopy(self.st.get("items", {}))
         for k, v in (("next", 1), ("items", {}), ("seen", {}), ("seeded", {}), ("prompts", {}), ("last_lines", [])):
             self.st.setdefault(k, v)
         self.changed = False
@@ -208,26 +237,61 @@ class Inbox:
             self.tg("sendMessage", chat_id=chat, reply_to_message_id=msg["message_id"], text=f"❌ Didn't send: {err}")
         print("dm custom", i, ok)
 
+    def save(self):
+        if not self.changed: return
+        try:
+            self.put(STATE, json.dumps(self.st, indent=1), self.sha, "dm inbox state"); return
+        except Exception:
+            print("dm state conflict, merging")
+        raw, sha = self.get(STATE)
+        cur = json.loads(raw) if raw else {}
+        mine = {k: v for k, v in self.st["items"].items() if self.orig.get(k) != v}
+        cur.setdefault("items", {}).update(mine)
+        cur["next"] = max(cur.get("next", 1), self.st["next"])
+        cur.setdefault("prompts", {}).update(self.st["prompts"])
+        for plat, d in self.st["seen"].items(): cur.setdefault("seen", {}).setdefault(plat, {}).update(d)
+        cur.setdefault("seeded", {}).update(self.st["seeded"])
+        cur["last_lines"] = self.st["last_lines"]
+        self.put(STATE, json.dumps(cur, indent=1), sha, "dm inbox state (merged)")
+
+    def hook(self, u):
+        if self.enabled and self.chat and self.owns(u):
+            self.run([u], poll=False)
+        else:
+            print("not a dm update")
+
     # ---------- one run ----------
-    def run(self, updates):
+    def run(self, updates, poll=True):
         if not self.enabled or not self.chat:
             print("dm inbox off" if self.enabled else "dm inbox: no telegram chat id"); return
         for u in updates:
             if u.get("callback_query"): self.on_callback(u["callback_query"])
             elif u.get("message"): self.on_message(u["message"])
-        if os.environ.get("DM_TEST") == "1":
+        if poll and os.environ.get("DM_TEST") == "1":
             self.new_item({"platform": "test", "conv": "test", "user_id": "0", "user": "@test_fan",
                            "text": "yo Otty, that CaseOH clip had me dying. you making more?"})
-        for d in self.poll_meta():
+        for d in (self.poll_meta() if poll else []):
             self.new_item(d)
         for it in self.st["items"].values():  # held DMs come back
-            if it.get("status") == "hold" and it.get("hold_until") and it["hold_until"] <= now():
+            if poll and it.get("status") == "hold" and it.get("hold_until") and it["hold_until"] <= now():
                 it.update(status="new", hold_until=None); self._alert(it, prefix="⏰ Reminder:")
         cut = now() - 14 * 86400
         for k in [k for k, it in self.st["items"].items() if it.get("created", 0) < cut]:
             self.st["items"].pop(k); self.changed = True
         live = {m for it in self.st["items"].values() for m in it.get("msgs", [])}
         self.st["prompts"] = {p: i for p, i in self.st["prompts"].items() if i in self.st["items"]}
-        if self.changed:
-            self.put(STATE, json.dumps(self.st, indent=1), self.sha, "dm inbox state")
+        self.save()
         print("dm inbox done, open", sum(1 for it in self.st["items"].values() if it["status"] in ("new", "hold")), "msgs", len(live))
+
+
+def main():
+    raw, _ = gh_get("social/config.json")
+    ib = Inbox(tg_api, gh_get, gh_put, json.loads(raw) if raw else {})
+    if len(sys.argv) > 1 and sys.argv[1] == "hook":
+        ib.hook(json.loads(os.environ.get("UPDATE") or "{}"))
+    else:
+        ib.run([])
+
+
+if __name__ == "__main__":
+    main()

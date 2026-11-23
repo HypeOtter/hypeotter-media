@@ -1,0 +1,30 @@
+name: DM inbox poll
+# New Facebook Page + Instagram DMs -> Telegram alert with Manage / Respond once / Hold / Custom buttons (zero Hark tokens).
+# Taps are handled instantly by the private repo's dm_hook.yml (Telegram webhook -> repository_dispatch tg_update).
+on:
+  schedule:
+    - cron: "*/5 13-23,0-3 * * *"   # every 5 min, about 8 am to 11 pm ET
+  workflow_dispatch:
+    inputs:
+      dm_test:
+        description: "Send a fake test DM alert to Telegram to try the buttons"
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency: dm-poll
+jobs:
+  poll:
+    if: github.repository == 'HypeOtter/hypeotter-media'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+      - name: Check DMs
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          PRIVATE_DATA_TOKEN: ${{ secrets.PRIVATE_DATA_TOKEN }}
+          META_PAGE_TOKEN: ${{ secrets.META_PAGE_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          DM_TEST: ${{ inputs.dm_test && '1' || '0' }}
+        run: pip -q install requests && python3 bots/dm_inbox.py

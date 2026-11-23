@@ -3,9 +3,7 @@
 Approve / Hold buttons, or a reply "approve" / "hold" to a review message. After a hold, a reply under the
 video or under the hold message is saved as notes for the editor. Saving review.json triggers review_apply
 in the private repo. Logs never print message text or usernames."""
-import base64, json, os, re, sys, requests
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from dm_inbox import Inbox
+import base64, json, os, re, requests
 TOK = os.environ["TELEGRAM_BOT_TOKEN"].strip().removeprefix("bot").strip(); API = f"https://api.telegram.org/bot{TOK}"
 PRIV = "HypeOtter/HypeOtter"
 H = {"Authorization": f"Bearer {os.environ['PRIVATE_DATA_TOKEN']}", "Accept": "application/vnd.github+json"}
@@ -31,12 +29,16 @@ def tg(method, **data):
     except Exception: return {}
 
 
-def review(ups):
+def main():
     raw, sha = get("review.json")
     if not raw: print("no review.json"); return
     d = json.loads(raw)
     if not d.get("enabled"): print("review off"); return
     items = d.setdefault("items", {})
+    off_raw, off_sha = get("social/review_offset.txt")
+    off = int(off_raw.strip()) if off_raw and off_raw.strip().isdigit() else 0
+    ups = requests.get(f"{API}/getUpdates", params={"offset": off, "timeout": 0,
+                       "allowed_updates": json.dumps(["message", "callback_query"])}, timeout=40).json().get("result", [])
     if not ups: print("no updates"); return
     by_msg = {mid: s for s, it in items.items() for mid in it.get("msgs", [])}
     changed = 0
@@ -56,6 +58,7 @@ def review(ups):
         return True
 
     for u in ups:
+        off = u["update_id"] + 1
         cq = u.get("callback_query")
         if cq:
             m = re.match(r"(ok|hold):(.+)", cq.get("data", ""))
@@ -84,30 +87,8 @@ def review(ups):
             print("notes", s)
     if changed:
         put("review.json", json.dumps(d, indent=1), sha, "review: Otty's decisions")
+    put("social/review_offset.txt", str(off), off_sha, "review offset")
     print("updates", len(ups), "changes", changed)
-
-
-def main():
-    off_raw, off_sha = get("social/review_offset.txt")
-    off = int(off_raw.strip()) if off_raw and off_raw.strip().isdigit() else 0
-    ups = requests.get(f"{API}/getUpdates", params={"offset": off, "timeout": 0,
-                       "allowed_updates": json.dumps(["message", "callback_query"])}, timeout=40).json().get("result", [])
-    cfg_raw, _ = get("social/config.json")
-    inbox = Inbox(tg, get, put, json.loads(cfg_raw) if cfg_raw else {})
-    dm_ups = [u for u in ups if inbox.owns(u)]
-    rest = [u for u in ups if not inbox.owns(u)]
-    try:
-        review(rest)
-    except Exception as e:
-        print("review step failed, keeping updates for next run:", type(e).__name__); ups = []
-    try:
-        inbox.run(dm_ups)
-    except Exception as e:
-        print("dm step failed:", type(e).__name__)
-    if ups:
-        off = ups[-1]["update_id"] + 1
-        put("social/review_offset.txt", str(off), off_sha, "review offset")
-    print("updates", len(ups), "dm", len(dm_ups))
 
 
 if __name__ == "__main__":

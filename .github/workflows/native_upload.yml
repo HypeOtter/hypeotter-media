@@ -9,7 +9,7 @@ on:
         type: string
         default: ""
       only:
-        description: "Comma list of platforms (blank = config): twitter,facebook,threads,instagram,tiktok,snapchat"
+        description: "Comma list of platforms (blank = config): twitter,facebook,threads,instagram,tiktok"
         type: string
         default: ""
       dry_run:

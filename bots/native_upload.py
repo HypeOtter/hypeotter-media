@@ -3,7 +3,7 @@
 pick : choose the next video Otty approved on Telegram (native.on_approval; else the next public YouTube video) that has approved/<slug>/final.mp4 in the private data repo,
        write plan.json (+ GitHub outputs). The workflow then fetches the file and publishes it on GitHub Pages.
 post : post the hosted file natively: X, Facebook (Reel) and Threads via Buffer; Instagram Reel via the
-       Graph API (file upload, no public link needed); TikTok inbox draft (file upload); Snapchat kit to Telegram.
+       Graph API (file upload, no public link needed); TikTok inbox draft (file upload); (Snapchat removed 2026-11-24.)
        Waits for Buffer to finish fetching, then records results in social/native.json and marks
        social/shared.json so the link sharer doesn't post the same video's link again.
 No LLM. Public logs print counts, platforms and status only.
@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 ROOT = os.environ.get("DATA_DIR", "data")
 CFG_ALL = json.load(open(os.path.join(ROOT, "social", "config.json")))
 CFG = {
-    "enabled": False, "platforms": ["twitter", "facebook", "threads", "instagram", "tiktok", "snapchat"],
+    "enabled": False, "platforms": ["twitter", "facebook", "threads", "instagram", "tiktok"],
     "backfill_buffer": False, "kinds": ["short"], "post_hours_et": [9, 22], "min_gap_minutes": 180,
     "max_seconds": {"twitter": 140, "facebook": 90, "threads": 300, "instagram": 900, "tiktok": 600},
     "link_reply": True, "max_tries": 3,
@@ -158,7 +158,7 @@ def bits(man):
     credit = ""
     m = re.search(r"Credit:([^\n]+)", man.get("description", ""))
     if m:
-        credit = "Credit:" + m.group(1).split(".")[0].strip()
+        credit = ""  # Otty 2026-11-24: no source attribution
     return title, q, tags, credit
 
 def caption(p, man, yt):
@@ -178,8 +178,6 @@ def caption(p, man, yt):
         return f"{title} 🦦\n\n{q}\n\n{cr}Follow @hypeotterclips for more. Full videos: link in bio 🔔\n\n{t} #reels"[:2200]
     if p == "tiktok":
         return f"{title} 🦦 {q} {t} #fyp"[:2200]
-    if p == "snapchat":
-        return f"{title} 🦦 {q} {' '.join(tags[:2])} #hypeotter"
     return title
 
 def link_line(p, yt):
@@ -327,19 +325,11 @@ def tiktok(path):
         return False, f"tiktok failed {why} {who}".strip()
     return True, f"{pid} {status or 'unknown'} {who}".strip()
 
-# ---------------- Snapchat kit ----------------
+# ---------------- Telegram note ----------------
 def kit_msg(msg):
     tok, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID") or CFG.get("telegram_chat_id")
     if tok and chat:
         http(f"https://api.telegram.org/bot{tok}/sendMessage", urllib.parse.urlencode({"chat_id": chat, "text": msg}).encode())
-
-def snapchat(text, slug):
-    tok, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID") or CFG.get("telegram_chat_id")
-    if not tok or not chat:
-        return False, "no telegram secret"
-    msg = f"Snapchat kit: {slug}\nVideo is in this chat already (or approved/{slug}/final.mp4).\nCaption:\n{text}"
-    st, b = http(f"https://api.telegram.org/bot{tok}/sendMessage", urllib.parse.urlencode({"chat_id": chat, "text": msg}).encode())
-    return st == 200, "sent to Telegram" if st == 200 else f"telegram {st}"
 
 # ---------------- post ----------------
 def post():
@@ -383,8 +373,6 @@ def post():
                 res = tiktok(path) if tiktok_ready() else (False, "not set up")
                 if res[0]:
                     kit_msg(f"TikTok draft is in your TikTok inbox: {slug}\nPaste this caption, then post:\n{text}")
-            elif p == "snapchat":
-                res = snapchat(text, slug)
             else:
                 res = (False, "unknown platform")
         except Exception as ex:

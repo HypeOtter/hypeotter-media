@@ -7,6 +7,10 @@ on:
       code:
         description: "code= value from the TikTok redirect"
         required: true
+      account:
+        description: "TikTok account this code is for (hypeotter or hypeotterclips)"
+        required: false
+        default: "hypeotter"
 permissions:
   contents: read
 concurrency: native-upload
@@ -27,6 +31,7 @@ jobs:
       - name: Exchange code
         env:
           CODE: ${{ inputs.code }}
+          ACCT: ${{ inputs.account }}
           KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
           SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
           REDIRECT: https://hypeotter.github.io/hypeotter-media/
@@ -34,6 +39,9 @@ jobs:
           python3 - <<'PY'
           import json, os, time, urllib.parse, urllib.request
           code = urllib.parse.unquote(os.environ["CODE"].strip())
+          acct = "".join(ch for ch in (os.environ.get("ACCT") or "hypeotter").lower().lstrip("@") if ch.isalnum() or ch in "._")
+          OUT = "data/social/tiktok_auth.json" if acct in ("", "hypeotter") else f"data/social/tiktok_auth_{acct}.json"
+          print("account:", acct)
           body = urllib.parse.urlencode({"client_key": os.environ["KEY"], "client_secret": os.environ["SECRET"],
               "code": code, "grant_type": "authorization_code", "redirect_uri": os.environ["REDIRECT"]}).encode()
           req = urllib.request.Request("https://open.tiktokapis.com/v2/oauth/token/", body,
@@ -47,11 +55,11 @@ jobs:
           print("scope:", d.get("scope"))
           print("refresh token valid for days:", int(d.get("refresh_expires_in", 0)) // 86400)
           json.dump({"refresh_token": d["refresh_token"], "open_id": d.get("open_id", ""), "scope": d.get("scope", ""),
-                     "updated": time.strftime("%Y-%m-%d")}, open("data/social/tiktok_auth.json", "w"))
+                     "updated": time.strftime("%Y-%m-%d")}, open(OUT, "w"))
           PY
       - name: Save to private repo
         working-directory: data
         run: |
           git config user.name "HypeOtter bot"; git config user.email "357183714+HypeOtter@users.noreply.github.com"
-          git add social/tiktok_auth.json && git commit -q -m "[social] tiktok auth"
+          git add social/tiktok_auth*.json && git commit -q -m "[social] tiktok auth"
           for i in 1 2 3; do git pull -q --rebase && git push -q && exit 0; sleep 10; done; exit 1

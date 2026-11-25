@@ -20,7 +20,7 @@ CFG_ALL = json.load(open(os.path.join(ROOT, "social", "config.json")))
 CFG = {
     "enabled": False, "platforms": ["twitter", "facebook", "threads", "instagram", "tiktok"],
     "backfill_buffer": False, "kinds": ["short"], "post_hours_et": [9, 22], "min_gap_minutes": 180,
-    "max_seconds": {"twitter": 140, "facebook": 90, "threads": 300, "instagram": 900, "tiktok": 600},
+    "max_seconds": {"twitter": 140, "facebook": 90, "threads": 300, "instagram": 900, "tiktok": 600, "tiktok_hypeotterclips": 600},
     "link_reply": True, "max_tries": 3,
 } | CFG_ALL.get("native", {})
 NATIVE_P = os.path.join(ROOT, "social", "native.json")
@@ -176,7 +176,7 @@ def caption(p, man, yt):
         return f"{title} 🦦\n\n{q}\n\n{cr}Follow the Page for more and subscribe on YouTube 🔔\n\n{t}"
     if p == "instagram":
         return f"{title} 🦦\n\n{q}\n\n{cr}Follow @hypeotterclips for more. Full videos: link in bio 🔔\n\n{t} #reels"[:2200]
-    if p == "tiktok":
+    if p == "tiktok" or p.startswith("tiktok_"):
         return f"{title} 🦦 {q} {t} #fyp"[:2200]
     return title
 
@@ -267,13 +267,19 @@ def instagram(path, text):
 # ---------------- TikTok (inbox draft, file upload) ----------------
 TT_AUTH = os.path.join(ROOT, "social", "tiktok_auth.json")  # private repo only; never printed
 
-def tiktok_ready():
-    return bool(os.environ.get("TIKTOK_CLIENT_SECRET")) and (
-        os.path.exists(TT_AUTH) or bool(os.environ.get("TIKTOK_REFRESH_TOKEN")))
+# One auth file per TikTok account: platform "tiktok" = @hypeotter (tiktok_auth.json),
+# platform "tiktok_<name>" = @<name> (tiktok_auth_<name>.json), e.g. tiktok_hypeotterclips.
+def tt_auth_path(p="tiktok"):
+    return TT_AUTH if p == "tiktok" else os.path.join(ROOT, "social", f"tiktok_auth_{p[len('tiktok_'):]}.json")
 
-def tiktok(path):
-    auth = jload(TT_AUTH, {})
-    rt = auth.get("refresh_token") or os.environ.get("TIKTOK_REFRESH_TOKEN", "")
+def tiktok_ready(p="tiktok"):
+    return bool(os.environ.get("TIKTOK_CLIENT_SECRET")) and (
+        os.path.exists(tt_auth_path(p)) or (p == "tiktok" and bool(os.environ.get("TIKTOK_REFRESH_TOKEN"))))
+
+def tiktok(path, p="tiktok"):
+    AUTH = tt_auth_path(p)
+    auth = jload(AUTH, {})
+    rt = auth.get("refresh_token") or (os.environ.get("TIKTOK_REFRESH_TOKEN", "") if p == "tiktok" else "")
     st, b = http("https://open.tiktokapis.com/v2/oauth/token/", urllib.parse.urlencode({
         "client_key": os.environ["TIKTOK_CLIENT_KEY"], "client_secret": os.environ["TIKTOK_CLIENT_SECRET"],
         "grant_type": "refresh_token", "refresh_token": rt}).encode(),
@@ -283,7 +289,7 @@ def tiktok(path):
     if not tok:
         return False, "token refresh failed"
     if d0.get("refresh_token") and d0["refresh_token"] != rt:
-        jsave(TT_AUTH, {"refresh_token": d0["refresh_token"], "open_id": d0.get("open_id", auth.get("open_id", "")),
+        jsave(AUTH, {"refresh_token": d0["refresh_token"], "open_id": d0.get("open_id", auth.get("open_id", "")),
                         "scope": d0.get("scope", auth.get("scope", "")), "updated": time.strftime("%Y-%m-%d")})
     size = os.path.getsize(path)
     chunk = size if size <= 64 * 2**20 else 10 * 2**20
@@ -369,10 +375,13 @@ def post():
                     res = (False, pid)
             elif p == "instagram":
                 res = instagram(path, text) if os.environ.get("META_PAGE_TOKEN") and os.environ.get("IG_USER_ID") else (False, "not set up")
-            elif p == "tiktok":
-                res = tiktok(path) if tiktok_ready() else (False, "not set up")
+            elif p == "tiktok" or p.startswith("tiktok_"):
+                if not tiktok_ready(p):
+                    print(p, "waiting: account not connected yet"); continue
+                res = tiktok(path, p)
                 if res[0]:
-                    kit_msg(f"TikTok draft is in your TikTok inbox: {slug}\nPaste this caption, then post:\n{text}")
+                    acct = "@hypeotter" if p == "tiktok" else "@" + p[len("tiktok_"):]
+                    kit_msg(f"TikTok draft is in the {acct} TikTok inbox: {slug}\nPaste this caption, then post:\n{text}")
             else:
                 res = (False, "unknown platform")
         except Exception as ex:

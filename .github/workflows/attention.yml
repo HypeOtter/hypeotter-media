@@ -1,0 +1,22 @@
+name: Needs attention
+on:
+  schedule:
+    - cron: "12 13-23,0-3 * * *"   # hourly, about 8 am to 11 pm ET
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: attention
+  cancel-in-progress: false
+jobs:
+  run:
+    if: github.repository == 'HypeOtter/hypeotter-media'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+      - run: pip -q install requests
+      - env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          PRIVATE_DATA_TOKEN: ${{ secrets.PRIVATE_DATA_TOKEN }}
+        run: python3 bots/attention.py

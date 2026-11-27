@@ -137,7 +137,7 @@ def choose(slug, key, todo, public):
     out("slug", slug); out("token", plan["token"])
 
 def targets(vid):
-    plats = ONLY or CFG["platforms"]
+    plats = [p for p in (ONLY or CFG["platforms"]) if not p.startswith("tiktok_") or tiktok_ready(p)]
     if CFG["backfill_buffer"] or ONLY:
         return plats
     shared = jload(SHARED_P, {"videos": {}}).get("videos", {}).get(vid, {})

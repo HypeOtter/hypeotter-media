@@ -96,6 +96,8 @@ def pick():
         rv = jload(os.path.join(ROOT, "review.json"), {})
         approved = [s for s, v in rv.get("items", {}).items() if v.get("status") in ("approved", "done")]
         order = approved
+        if want and want not in order:
+            approved = approved + [want]; order = [want]  # manual one-off (backfill of older Telegram-approved Shorts)
     if CFG.get("include_unpublished") and approved is None:
         order += [x for x in sent if x not in up]  # delivered to Telegram, never on YouTube
     later = []

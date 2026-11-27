@@ -7,7 +7,7 @@ post : post the hosted file natively: X, Facebook (Reel) and Threads via Buffer;
        Waits for Buffer to finish fetching, then records results in social/native.json and marks
        social/shared.json so the link sharer doesn't post the same video's link again.
 No LLM. Public logs print counts, platforms and status only.
-Env: DATA_DIR (private data checkout), BUFFER_TOKEN, META_PAGE_TOKEN, IG_USER_ID, TIKTOK_CLIENT_KEY,
+Env: DATA_DIR (private data checkout), BUFFER_TOKEN, BUFFER_TOKEN_2 (IG + TikTok Buffer), META_PAGE_TOKEN, IG_USER_ID, TIKTOK_CLIENT_KEY,
 TIKTOK_CLIENT_SECRET, TIKTOK_REFRESH_TOKEN, TELEGRAM_BOT_TOKEN, DRY_RUN, FORCE, SLUG,
 ONLY (comma list of platforms), MEDIA_URL (set by the workflow), VIDEO_FILE."""
 import json, os, re, sys, time, random, struct, secrets, datetime as dt
@@ -137,7 +137,7 @@ def choose(slug, key, todo, public):
     out("slug", slug); out("token", plan["token"])
 
 def targets(vid):
-    plats = [p for p in (ONLY or CFG["platforms"]) if not p.startswith("tiktok_") or tiktok_ready(p)]
+    plats = [p for p in (ONLY or CFG["platforms"]) if not p.startswith("tiktok_") or b2_chan(p) or tiktok_ready(p)]
     if CFG["backfill_buffer"] or ONLY:
         return plats
     shared = jload(SHARED_P, {"videos": {}}).get("videos", {}).get(vid, {})
@@ -198,9 +198,9 @@ def mp4_seconds(path):
     return dur / ts if ts else 0
 
 # ---------------- Buffer ----------------
-def gql(q):
+def gql(q, tok_env="BUFFER_TOKEN"):
     st, body = http("https://api.buffer.com", json.dumps({"query": q}).encode(),
-                    {"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["BUFFER_TOKEN"]})
+                    {"Content-Type": "application/json", "Authorization": "Bearer " + os.environ[tok_env]})
     r = json.loads(body or b"{}")
     if r.get("errors"):
         raise RuntimeError(str(r["errors"])[:300])
@@ -213,10 +213,17 @@ def buffer_channels():
             ch.setdefault(c["service"], c["id"])
     return ch
 
-def buffer_video(p, chan, text, url, link, secs):
+# Second Buffer (clipchannel1111, free): Instagram + TikTok accounts, mapped platform -> channel id
+# in social/config.json native.buffer2. Posts at the same time as everything else in this run.
+def b2_chan(p):
+    return CFG.get("buffer2", {}).get(p) if os.environ.get("BUFFER_TOKEN_2") else None
+
+def buffer_video(p, chan, text, url, link, secs, tok_env="BUFFER_TOKEN"):
     asset = '[{ video: { url: %s } }]' % json.dumps(url)
     meta = ""
-    if p == "facebook":
+    if p == "instagram":
+        meta = 'metadata: { instagram: { type: reel, shouldShareToFeed: true } },'
+    elif p == "facebook":
         # firstComment needs a paid Buffer plan, so the link rides in the caption instead
         meta = 'metadata: { facebook: { type: %s } },' % ("reel" if secs <= CFG["max_seconds"]["facebook"] else "post")
         if link and link not in text:
@@ -226,15 +233,15 @@ def buffer_video(p, chan, text, url, link, secs):
         meta = 'metadata: { %s: { thread: %s } },' % (p, thread)
     q = ('mutation { createPost(input: { text: %s, channelId: %s, assets: %s, %s schedulingType: automatic, mode: shareNow }) '
          '{ ... on PostActionSuccess { post { id } } ... on MutationError { message } } }') % (json.dumps(text), json.dumps(chan), asset, meta)
-    r = gql(q)["createPost"]
+    r = gql(q, tok_env)["createPost"]
     if r.get("post"):
         return True, r["post"]["id"]
     return False, r.get("message", "error")[:200]
 
-def buffer_wait(pid, limit=1200):
+def buffer_wait(pid, limit=1200, tok_env="BUFFER_TOKEN"):
     t0 = time.time()
     while time.time() - t0 < limit:
-        p = gql('query { post(input: { id: %s }) { status externalLink error { message } } }' % json.dumps(pid))["post"]
+        p = gql('query { post(input: { id: %s }) { status externalLink error { message } } }' % json.dumps(pid), tok_env)["post"]
         if p["status"] in ("sent", "error"):
             return p["status"] == "sent", p.get("externalLink") or (p.get("error") or {}).get("message", "")
         time.sleep(30)
@@ -365,13 +372,18 @@ def post():
         if DRY:
             print(f"--- {p} (dry run)\n{text}\n{('+ ' + link) if link and p in BUFFER_SVC else ''}"); continue
         try:
-            if p in BUFFER_SVC:
+            if b2_chan(p):
+                ok, pid = buffer_video(p, b2_chan(p), text, url, "", secs, "BUFFER_TOKEN_2")
+                if ok:
+                    pending[p] = (pid, "BUFFER_TOKEN_2"); continue
+                res = (False, pid)
+            elif p in BUFFER_SVC:
                 if p not in chans:
                     res = (False, "no Buffer channel")
                 else:
                     ok, pid = buffer_video(p, chans[p], text, url, link, secs)
                     if ok:
-                        pending[p] = pid; continue
+                        pending[p] = (pid, "BUFFER_TOKEN"); continue
                     res = (False, pid)
             elif p == "instagram":
                 res = instagram(path, text) if os.environ.get("META_PAGE_TOKEN") and os.environ.get("IG_USER_ID") else (False, "not set up")
@@ -387,13 +399,13 @@ def post():
         except Exception as ex:
             res = (False, str(ex)[:200])
         record(rec, p, res, now)
-    for p, pid in pending.items():
+    for p, (pid, tk) in pending.items():
         try:
-            res = buffer_wait(pid)
+            res = buffer_wait(pid, tok_env=tk)
         except Exception as ex:
             res = (False, str(ex)[:200])
         record(rec, p, res, now)
-        if res[0] and not vid.startswith("slug:"):
+        if res[0] and p in BUFFER_SVC and not vid.startswith("slug:"):
             shared["videos"].setdefault(vid, {})[p] = {"ok": True, "ref": "native " + str(res[1])[:200], "at": now}
     if not DRY:
         nat["last_post_at"] = now

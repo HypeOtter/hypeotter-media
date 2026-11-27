@@ -50,6 +50,7 @@ jobs:
           SLUG: ${{ inputs.slug }}
           ONLY: ${{ inputs.only }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
+          BUFFER_TOKEN_2: ${{ secrets.BUFFER_TOKEN_2 }}
         run: python3 bots/native_upload.py pick
       - name: Fetch the video and build the media site
         if: steps.pick.outputs.slug != ''
@@ -134,6 +135,7 @@ jobs:
           ONLY: ${{ inputs.only }}
           DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '0' }}
           BUFFER_TOKEN: ${{ secrets.BUFFER_TOKEN }}
+          BUFFER_TOKEN_2: ${{ secrets.BUFFER_TOKEN_2 }}
           META_PAGE_TOKEN: ${{ secrets.META_PAGE_TOKEN }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}

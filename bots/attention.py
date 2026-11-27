@@ -28,11 +28,19 @@ def main():
         if r.get("ok"):
             it["nudged_at"] = now; n += 1
             mid = r["result"]["message_id"]; it["msgs"].append(mid)  # replying "approve"/"hold"/notes here works too
-    if n:
+    done = {s: (it["nudged_at"], it["msgs"]) for s, it in d.get("items", {}).items() if it.get("nudged_at") == now}
+    for attempt in range(5):  # review.json changes often: re-read and merge until the save lands
+        if not n: break
+        if attempt:
+            time.sleep(3); raw, sha = get("review.json"); d = json.loads(raw)
+            for s, (t, msgs) in done.items():
+                it = d["items"].get(s)
+                if it: it["nudged_at"] = t; it["msgs"] = list(dict.fromkeys(it.get("msgs", []) + msgs))
         body = {"message": f"attention: {n} reminder(s)", "content": base64.b64encode(json.dumps(d, indent=1).encode()).decode(),
                 "sha": sha, "branch": "main",
                 "committer": {"name": "HypeOtter bot", "email": "357183714+HypeOtter@users.noreply.github.com"}}
-        requests.put(f"https://api.github.com/repos/{PRIV}/contents/review.json", headers=H, json=body, timeout=30).raise_for_status()
+        r = requests.put(f"https://api.github.com/repos/{PRIV}/contents/review.json", headers=H, json=body, timeout=30)
+        if r.status_code != 409: r.raise_for_status(); break
     print("reminders sent:", n)
 
 if __name__ == "__main__":

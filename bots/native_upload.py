@@ -215,8 +215,26 @@ def buffer_channels():
 
 # Second Buffer (clipchannel1111, free): Instagram + TikTok accounts, mapped platform -> channel id
 # in social/config.json native.buffer2. Posts at the same time as everything else in this run.
+_B2 = None
 def b2_chan(p):
-    return CFG.get("buffer2", {}).get(p) if os.environ.get("BUFFER_TOKEN_2") else None
+    """Channel id for platform p on the second Buffer, or None. Platforms listed in native.buffer2
+    (instagram, tiktok, tiktok_<name>) are matched to that Buffer's channels by service and handle."""
+    global _B2
+    if p not in CFG.get("buffer2", []) or not os.environ.get("BUFFER_TOKEN_2"):
+        return None
+    if _B2 is None:
+        _B2 = {}
+        try:
+            for org in gql("query { account { organizations { id } } }", "BUFFER_TOKEN_2")["account"]["organizations"]:
+                for c in gql('query { channels(input: { organizationId: %s }) { id service name } }' % json.dumps(org["id"]), "BUFFER_TOKEN_2")["channels"]:
+                    name = (c.get("name") or "").lower().lstrip("@")
+                    if c["service"] == "instagram":
+                        _B2.setdefault("instagram", c["id"])
+                    elif c["service"] == "tiktok":
+                        _B2["tiktok" if name == "hypeotter" else "tiktok_" + name] = c["id"]
+        except Exception as ex:
+            print("second Buffer unavailable:", str(ex)[:150])
+    return _B2.get(p)
 
 def buffer_video(p, chan, text, url, link, secs, tok_env="BUFFER_TOKEN"):
     asset = '[{ video: { url: %s } }]' % json.dumps(url)
